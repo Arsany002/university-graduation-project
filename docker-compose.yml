@@ -1,0 +1,85 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: smart-task-agent-postgres
+    environment:
+      POSTGRES_DB: SmartPersonalTaskAgent
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - smart-task-agent-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: smart-task-agent-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - smart-task-agent-network
+    command: redis-server --appendonly yes
+
+  # Smart Personal Task Agent API
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: smart-task-agent-api
+    ports:
+      - "8080:80"
+      - "8081:443"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Host=postgres;Database=SmartPersonalTaskAgent;Username=postgres;Password=password
+      - ConnectionStrings__Redis=redis:6379
+      - JwtSettings__SecretKey=YourSuperSecretKeyThatIsAtLeast32CharactersLong!
+      - JwtSettings__Issuer=SmartPersonalTaskAgent
+      - JwtSettings__Audience=SmartPersonalTaskAgentUsers
+      - JwtSettings__ExpiryInMinutes=60
+      - LLM__BaseUrl=https://api.openai.com/v1
+      - LLM__ApiKey=${OPENAI_API_KEY:-your-openai-api-key-here}
+      - LLM__Model=gpt-3.5-turbo
+      - Google__ClientId=${GOOGLE_CLIENT_ID:-your-google-client-id}
+      - Google__ClientSecret=${GOOGLE_CLIENT_SECRET:-your-google-client-secret}
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - smart-task-agent-network
+    volumes:
+      - ./logs:/app/logs
+
+  # Hangfire Dashboard (optional, for monitoring background jobs)
+  hangfire-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: smart-task-agent-hangfire
+    ports:
+      - "8082:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Host=postgres;Database=SmartPersonalTaskAgent;Username=postgres;Password=password
+    depends_on:
+      - postgres
+    networks:
+      - smart-task-agent-network
+    command: ["dotnet", "SmartPersonalTaskAgent.API.dll", "--urls", "http://+:80"]
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  smart-task-agent-network:
+    driver: bridge
